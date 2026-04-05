@@ -1,0 +1,60 @@
+import torch
+import json
+import numpy as np
+import os
+from collections import defaultdict
+from sklearn.metrics import accuracy_score, f1_score
+
+# -------- PATHS --------
+EMB_DIR = "data/embeddings"
+DATA_DIR = "data/raw/twibot20"
+
+# -------- LOAD LABELS --------
+labels = {}
+
+for split in ["train.json", "dev.json", "test.json"]:
+    with open(os.path.join(DATA_DIR, split), "r", encoding="utf-8") as f:
+        data = json.load(f)
+        for u in data:
+            labels[u["ID"]] = u["label"]  # 1 = bot, 0 = human
+
+# -------- LOAD EMBEDDINGS --------
+snapshots = sorted(os.listdir(EMB_DIR))
+node_scores = defaultdict(list)
+
+for snap in snapshots:
+    emb = torch.load(os.path.join(EMB_DIR, snap))
+    norms = torch.norm(emb, dim=1).numpy()
+
+    for i, score in enumerate(norms):
+        node_scores[i].append(score)
+
+# -------- COMPUTE GROWTH RATE --------
+growth = {}
+for node, scores in node_scores.items():
+    if len(scores) >= 2:
+        growth[node] = scores[-1] - scores[0]
+
+# -------- THRESHOLD-BASED BOT DETECTION --------
+values = np.array(list(growth.values()))
+threshold = np.mean(values) + np.std(values)
+
+predicted = {}
+for node, g in growth.items():
+    predicted[node] = 1 if g > threshold else 0
+
+# -------- EVALUATION --------
+y_true = []
+y_pred = []
+
+for node_id, pred in predicted.items():
+    if node_id in labels:
+        y_true.append(labels[node_id])
+        y_pred.append(pred)
+
+acc = accuracy_score(y_true, y_pred)
+f1 = f1_score(y_true, y_pred)
+
+print("✔ Bot Detection Completed")
+print(f"Accuracy: {acc:.4f}")
+print(f"F1 Score: {f1:.4f}")
